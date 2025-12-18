@@ -23,6 +23,7 @@ const ProgramClaude = "claude"
 
 const ProgramAider = "aider"
 const ProgramGemini = "gemini"
+const ProgramCursorAgent = "cursor-agent"
 
 // TmuxSession represents a managed tmux session
 type TmuxSession struct {
@@ -149,14 +150,19 @@ func (t *TmuxSession) Start(workDir string) error {
 		return fmt.Errorf("error restoring tmux session: %w", err)
 	}
 
-	if strings.HasSuffix(t.program, ProgramClaude) || strings.HasSuffix(t.program, ProgramAider) || strings.HasSuffix(t.program, ProgramGemini) {
+	if strings.HasSuffix(t.program, ProgramClaude) || strings.HasSuffix(t.program, ProgramAider) || strings.HasSuffix(t.program, ProgramGemini) || strings.HasSuffix(t.program, ProgramCursorAgent) {
 		searchString := "Do you trust the files in this folder?"
 		tapFunc := t.TapEnter
 		maxWaitTime := 30 * time.Second // Much longer timeout for slower systems
-		if !strings.HasSuffix(t.program, ProgramClaude) {
+		if strings.HasSuffix(t.program, ProgramAider) || strings.HasSuffix(t.program, ProgramGemini) {
 			searchString = "Open documentation url for more info"
 			tapFunc = t.TapDAndEnter
 			maxWaitTime = 45 * time.Second // Aider/Gemini take longer to start
+		} else if strings.HasSuffix(t.program, ProgramCursorAgent) {
+			// cursor-agent may have its own trust prompt - adjust as needed
+			searchString = "trust"
+			tapFunc = t.TapEnter
+			maxWaitTime = 30 * time.Second
 		}
 
 		// Deal with "do you trust the files" screen by sending an enter keystroke.
@@ -250,13 +256,16 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 		return false, false
 	}
 
-	// Only set hasPrompt for claude and aider. Use these strings to check for a prompt.
+	// Only set hasPrompt for claude, aider, gemini, and cursor-agent. Use these strings to check for a prompt.
 	if t.program == ProgramClaude {
 		hasPrompt = strings.Contains(content, "No, and tell Claude what to do differently")
 	} else if strings.HasPrefix(t.program, ProgramAider) {
 		hasPrompt = strings.Contains(content, "(Y)es/(N)o/(D)on't ask again")
 	} else if strings.HasPrefix(t.program, ProgramGemini) {
 		hasPrompt = strings.Contains(content, "Yes, allow once")
+	} else if strings.HasPrefix(t.program, ProgramCursorAgent) {
+		// cursor-agent prompts for accepting changes
+		hasPrompt = strings.Contains(content, "Accept") || strings.Contains(content, "Reject")
 	}
 
 	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {

@@ -14,7 +14,7 @@ import (
 
 const (
 	ConfigFileName = "config.json"
-	defaultProgram = "claude"
+	defaultProgram = "cursor-agent"
 )
 
 // GetConfigDir returns the path to the application's configuration directory
@@ -40,9 +40,9 @@ type Config struct {
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
-	program, err := GetClaudeCommand()
+	program, err := GetDefaultAgentCommand()
 	if err != nil {
-		log.ErrorLog.Printf("failed to get claude command: %v", err)
+		log.ErrorLog.Printf("failed to get default agent command: %v", err)
 		program = defaultProgram
 	}
 
@@ -61,6 +61,16 @@ func DefaultConfig() *Config {
 	}
 }
 
+// GetDefaultAgentCommand attempts to find the default agent command (cursor-agent) in the user's shell
+// It checks in the following order:
+// 1. Shell alias resolution: using "which" command
+// 2. PATH lookup
+//
+// If both fail, it returns an error.
+func GetDefaultAgentCommand() (string, error) {
+	return getAgentCommand("cursor-agent")
+}
+
 // GetClaudeCommand attempts to find the "claude" command in the user's shell
 // It checks in the following order:
 // 1. Shell alias resolution: using "which" command
@@ -68,6 +78,11 @@ func DefaultConfig() *Config {
 //
 // If both fail, it returns an error.
 func GetClaudeCommand() (string, error) {
+	return getAgentCommand("claude")
+}
+
+// getAgentCommand attempts to find the specified command in the user's shell
+func getAgentCommand(cmdName string) (string, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/bash" // Default to bash if SHELL is not set
@@ -77,11 +92,11 @@ func GetClaudeCommand() (string, error) {
 	// For zsh, source .zshrc; for bash, source .bashrc
 	var shellCmd string
 	if strings.Contains(shell, "zsh") {
-		shellCmd = "source ~/.zshrc &>/dev/null || true; which claude"
+		shellCmd = fmt.Sprintf("source ~/.zshrc &>/dev/null || true; which %s", cmdName)
 	} else if strings.Contains(shell, "bash") {
-		shellCmd = "source ~/.bashrc &>/dev/null || true; which claude"
+		shellCmd = fmt.Sprintf("source ~/.bashrc &>/dev/null || true; which %s", cmdName)
 	} else {
-		shellCmd = "which claude"
+		shellCmd = fmt.Sprintf("which %s", cmdName)
 	}
 
 	cmd := exec.Command(shell, "-c", shellCmd)
@@ -90,7 +105,7 @@ func GetClaudeCommand() (string, error) {
 		path := strings.TrimSpace(string(output))
 		if path != "" {
 			// Check if the output is an alias definition and extract the actual path
-			// Handle formats like "claude: aliased to /path/to/claude" or other shell-specific formats
+			// Handle formats like "cmd: aliased to /path/to/cmd" or other shell-specific formats
 			aliasRegex := regexp.MustCompile(`(?:aliased to|->|=)\s*([^\s]+)`)
 			matches := aliasRegex.FindStringSubmatch(path)
 			if len(matches) > 1 {
@@ -101,12 +116,12 @@ func GetClaudeCommand() (string, error) {
 	}
 
 	// Otherwise, try to find in PATH directly
-	claudePath, err := exec.LookPath("claude")
+	cmdPath, err := exec.LookPath(cmdName)
 	if err == nil {
-		return claudePath, nil
+		return cmdPath, nil
 	}
 
-	return "", fmt.Errorf("claude command not found in aliases or PATH")
+	return "", fmt.Errorf("%s command not found in aliases or PATH", cmdName)
 }
 
 func LoadConfig() *Config {
