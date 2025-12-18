@@ -150,50 +150,58 @@ func (t *TmuxSession) Start(workDir string) error {
 		return fmt.Errorf("error restoring tmux session: %w", err)
 	}
 
-	if strings.HasSuffix(t.program, ProgramClaude) || strings.HasSuffix(t.program, ProgramAider) || strings.HasSuffix(t.program, ProgramGemini) || strings.HasSuffix(t.program, ProgramCursorAgent) {
-		searchString := "Do you trust the files in this folder?"
-		tapFunc := t.TapEnter
-		maxWaitTime := 30 * time.Second // Much longer timeout for slower systems
-		if strings.HasSuffix(t.program, ProgramAider) || strings.HasSuffix(t.program, ProgramGemini) {
-			searchString = "Open documentation url for more info"
-			tapFunc = t.TapDAndEnter
-			maxWaitTime = 45 * time.Second // Aider/Gemini take longer to start
-		} else if strings.HasSuffix(t.program, ProgramCursorAgent) {
-			// cursor-agent may have its own trust prompt - adjust as needed
-			searchString = "trust"
-			tapFunc = t.TapEnter
-			maxWaitTime = 30 * time.Second
+	// Handle trust screen asynchronously so UI doesn't block
+	go t.handleTrustScreen()
+
+	return nil
+}
+
+// handleTrustScreen handles the initial trust/permission prompts for various agents
+// This runs asynchronously to avoid blocking the UI during slow agent startups
+func (t *TmuxSession) handleTrustScreen() {
+	if !strings.HasSuffix(t.program, ProgramClaude) && !strings.HasSuffix(t.program, ProgramAider) && !strings.HasSuffix(t.program, ProgramGemini) && !strings.HasSuffix(t.program, ProgramCursorAgent) {
+		return
+	}
+
+	searchString := "Do you trust the files in this folder?"
+	tapFunc := t.TapEnter
+	maxWaitTime := 30 * time.Second // Much longer timeout for slower systems
+	if strings.HasSuffix(t.program, ProgramAider) || strings.HasSuffix(t.program, ProgramGemini) {
+		searchString = "Open documentation url for more info"
+		tapFunc = t.TapDAndEnter
+		maxWaitTime = 45 * time.Second // Aider/Gemini take longer to start
+	} else if strings.HasSuffix(t.program, ProgramCursorAgent) {
+		// cursor-agent may have its own trust prompt - adjust as needed
+		searchString = "trust"
+		tapFunc = t.TapEnter
+		maxWaitTime = 30 * time.Second
+	}
+
+	// Deal with "do you trust the files" screen by sending an enter keystroke.
+	// Use exponential backoff with longer timeout for reliability on slow systems
+	startTime := time.Now()
+	sleepDuration := 100 * time.Millisecond
+
+	for time.Since(startTime) < maxWaitTime {
+		time.Sleep(sleepDuration)
+		content, err := t.CapturePaneContent()
+		if err != nil {
+			// Session might not be ready yet, continue waiting
+		} else {
+			if strings.Contains(content, searchString) {
+				if err := tapFunc(); err != nil {
+					log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
+				}
+				return
+			}
 		}
 
-		// Deal with "do you trust the files" screen by sending an enter keystroke.
-		// Use exponential backoff with longer timeout for reliability on slow systems
-		startTime := time.Now()
-		sleepDuration := 100 * time.Millisecond
-		attempt := 0
-
-		for time.Since(startTime) < maxWaitTime {
-			attempt++
-			time.Sleep(sleepDuration)
-			content, err := t.CapturePaneContent()
-			if err != nil {
-				// Session might not be ready yet, continue waiting
-			} else {
-				if strings.Contains(content, searchString) {
-					if err := tapFunc(); err != nil {
-						log.ErrorLog.Printf("could not tap enter on trust screen: %v", err)
-					}
-					break
-				}
-			}
-
-			// Exponential backoff with cap at 1 second
-			sleepDuration = time.Duration(float64(sleepDuration) * 1.2)
-			if sleepDuration > time.Second {
-				sleepDuration = time.Second
-			}
+		// Exponential backoff with cap at 1 second
+		sleepDuration = time.Duration(float64(sleepDuration) * 1.2)
+		if sleepDuration > time.Second {
+			sleepDuration = time.Second
 		}
 	}
-	return nil
 }
 
 // Restore attaches to an existing session and restores the window size
